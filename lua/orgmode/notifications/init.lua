@@ -63,6 +63,60 @@ function Notifications:notify(time)
   end
 end
 
+
+-- count the amount of tasks one has during a day
+function Notifications:count_daily_tasks()
+  local tasks = self:get_daily_tasks()
+  --let tasks = Not
+  --for _, task in ipairs(tasks) do
+  --  --local title = string.format('%s (%s)', task.title, task.humanized_duration)
+  --  local title = string.format('\"%s\"' , task.title )
+  --  local date = string.format('%s: %s', task.type, task.time:to_string())
+  --  vim.system({
+  --    'notify-send', "DAILY TASK: " .. title .. " expected at: " .. date
+  --  })
+  --end
+
+  return table.getn(tasks)
+end
+
+
+
+-- gets all tasks one has during a day (as in during a calendar date as in from 00:00 to 23:55)
+-- <except the task thats meant to remind/force you to check the tasks themelf for a given calendar day>
+--
+-- @param_filter_task => function(task_to_filter)
+  -- -> for more flexibility you can provide  a function to filter tasks like:
+  --
+  --      function f(task)
+  --          for _, tag in pairs(task.tags) do
+  --            if tag == "FORCE_COUNT" then
+  --              return false
+  --            end
+  --          end
+  --          return true
+  --      end
+  --
+  --
+--
+--
+function Notifications:get_daily_tasks(param_filter_task_fn)
+  local tasks = {}
+
+  --filter out tasks whose sole purpose is to make you count tasks
+  for _, task in pairs(self:get_upcomming_day_tasks(Date.now())) do
+
+    if (param_filter_task_fn(task)) then
+      table.insert(tasks, task)
+    end
+  end
+
+  -- make sure vim quits instead of continuing to run
+  -- V isn't needed as get_daily_tasks() wouldn't be called from "the outside"
+  --return vim.cmd([[qa!]])
+  return tasks
+end
+
 function Notifications:cron()
   local tasks = self:get_tasks(Date.now())
   if type(config.notifications.cron_notifier) == 'function' then
@@ -72,6 +126,7 @@ function Notifications:cron()
   end
   vim.cmd([[qall!]])
 end
+
 
 ---@param tasks table[]
 function Notifications:_cron_notifier(tasks)
@@ -94,6 +149,39 @@ function Notifications:_cron_notifier(tasks)
       vim.system({ 'terminal-notifier', '-title', title, '-subtitle', subtitle, '-message', date })
     end
   end
+end
+
+-- returns all upcomming=>(unfunished) tasks during a time's day. It dosen't respect
+-- the minute but merely the day
+---@param time OrgDate
+function Notifications:get_upcomming_day_tasks(time)
+  local tasks = {}
+  for _, orgfile in ipairs(self.files:all()) do
+    for _, headline in ipairs(orgfile:get_opened_unfinished_headlines()) do
+      for _, date in ipairs(headline:get_deadline_and_scheduled_dates()) do
+        local reminders = self:_check_reminders_daily(date, time)
+        for _, reminder in ipairs(reminders) do
+          table.insert(tasks, {
+            file = orgfile.filename,
+            todo = headline:get_todo(),
+            category = headline:get_category(),
+            priority = headline:get_priority(),
+            title = headline:get_title(),
+            level = headline:get_level(),
+            tags = headline:get_tags(),
+            original_time = date,
+            time = reminder.time,
+            reminder_type = reminder.reminder_type,
+            minutes = reminder.minutes,
+            humanized_duration = utils.humanize_minutes(reminder.minutes),
+            type = date.type,
+            range = headline:get_range(),
+          })
+        end
+      end
+    end
+  end
+  return tasks
 end
 
 ---@param time OrgDate
@@ -182,5 +270,73 @@ function Notifications:_check_reminders(date, time)
 
   return result
 end
+
+-- unlike the the _check_reminders  which should be above this function does nearly the same except that it
+-- will determine if the dates obtained trough VARIOUS ways dates can be determined are within THE SAME DAY
+-- not within the same minute... This is useful to have as the bare _check_reminders function that was originally
+-- there would omit a date if its not exactly the same. Which makes sense for notifier tracking as otherwise we'd have
+-- it run 60 * 60 * 24 times a day .....
+--
+-- Ther reason I use this is to be able to (from within other functions that would be called trough the cron() callchain )
+-- count the number of unfinished entries scheduled for each calendar day and send a notification with the count. Well
+-- actually I rather use the number in a sort of captcha setup to force me to solve a small riddle and acknowledge I catually
+-- looked on the calendar but whatever ..........
+---@param date_a OrgDate - date to check
+---@param date_b OrgDate - date to check against
+---@returns table|nil
+function Notifications:_check_reminders_daily(date_a, date_b)
+  local result = {}
+  local notifications = config.notifications
+  if date_a:is_deadline() and not notifications.deadline_reminder then
+    return result
+  end
+  if date_a:is_scheduled() and not notifications.scheduled_reminder then
+    return result
+  end
+
+  if notifications.repeater_reminder_time and date_a:get_repeater() then
+    local repeater_time = date_a:apply_repeater_until(date_b)
+    local times = utils.ensure_array(notifications.repeater_reminder_time)
+    local minutes = repeater_time:diff(date_b, 'day')
+    if vim.tbl_contains(times, minutes) then
+      table.insert(result, {
+        reminder_type = 'repeater',
+        time = repeater_time:without_adjustments(),
+        minutes = minutes,
+      })
+    end
+  end
+
+  if notifications.deadline_warning_reminder_time and date_a:is_deadline() and date_a:get_negative_adjustment() then
+    local warning_time = date_a:with_negative_adjustment()
+    local times = utils.ensure_array(notifications.deadline_warning_reminder_time)
+    local minutes = warning_time:diff(date_b, 'minute')
+    if vim.tbl_contains(times, minutes) then
+      local real_minutes = date_a:diff(date_b, 'day')
+      table.insert(result, {
+        reminder_type = 'warning',
+        time = date_a:without_adjustments(),
+        minutes = real_minutes,
+      })
+    end
+  end
+
+  if notifications.reminder_time then
+    local times = utils.ensure_array(notifications.reminder_time)
+    local minutes = date_a:diff(date_b, 'day')
+    if vim.tbl_contains(times, minutes) then
+      table.insert(result, {
+        reminder_type = 'time',
+        time = date_a:without_adjustments(),
+        minutes = minutes,
+      })
+    end
+  end
+
+  return result
+end
+
+
+
 
 return Notifications

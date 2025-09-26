@@ -188,6 +188,53 @@ function Org.action(cmd, opts)
   end
 end
 
+-- if we have events who for some reason are involved
+-- in retriving and or consequently counting tasks such
+-- as a task having thE :FORCE_COUNT: TAG counting all
+-- tasks in the users current daily(as in calendar day for given agenda)
+--
+-- the problem however is that we DO NOT want to include the task
+-- that triggered the whole chain of events to also be included as its a
+-- sort of meta-task usually. Like a task whose sole purpose is to
+-- retrive the other outstanding tasks and force you to acknlodge them
+--
+-- and then based on the count generating a captcha/challenge of some sort
+-- which aims to ensure the user actually looked at the calendar to for
+-- example stop scheduled calls or whatever bugs him into caring ....
+function all_but_countertask(task)
+    for _, tag in pairs(task.tags) do
+      if tag == "FORCE_COUNT" then
+        return false
+      end
+    end
+    return true
+end
+
+-- externally exposed custom extra function added by me
+-- can be accessed via ofc nix build .#  followed by:
+--
+-- $ /result/bin/nvim --headless -c "lua = 
+--
+--returns an integer
+function Org.get_agenda_tasks_today(opts)
+  local ok, result = pcall(function()
+    local config = require('orgmode.config'):extend(opts or {})
+    Org.files:load_sync(true, 20000)
+    daily_tasks  = require('orgmode.notifications')
+      :new({
+        files = Org.files,
+      })
+      :get_daily_tasks(all_but_countertask)
+  end)
+  if not ok then
+    require('orgmode.utils').system_notification('count_agenda: ' .. tostring(result))
+    return vim.cmd([[qa!]])
+  else
+      return daily_tasks
+    --return instance.notifications
+  end
+end
+
 function Org.cron(opts)
   local ok, result = pcall(function()
     local config = require('orgmode.config'):extend(opts or {})
