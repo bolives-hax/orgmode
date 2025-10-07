@@ -294,6 +294,13 @@ function Notifications:_check_reminders_daily(date_a, date_b)
     return result
   end
 
+  --  ensure this is set in your orgmode user config!!!  If this isn't set repeaters
+  --  wont be applied thus whatever is scheduled to happence "every <X-time>" or "once a <X-time>
+  --  is bound to be lost. While it will show up in the agenda view just fine the cron() function
+  --  wont get to see it !!!!! Thus if you want recoccuring reminders SET IT! setting it to [0] is
+  --  sufficient. Setting it to [ 0 ] doesn't imply = false ... but false is the default
+  --  |                 | while the manual describes this I'll include it as a personal note to avoid confusion!!
+  --  V                 V
   if notifications.repeater_reminder_time and date_a:get_repeater() then
     local repeater_time = date_a:apply_repeater_until(date_b)
     local times = utils.ensure_array(notifications.repeater_reminder_time)
